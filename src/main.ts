@@ -3,7 +3,7 @@
 import './style.css';
 import { View, BONN, type Overlay } from './render';
 import { CHUNK, HALF, SCENARIOS, landMask, ring, spiral, type Pt, type Scenario, type Scene, type Stroke } from './world';
-import type { FrameMsg, FromWorker, ToWorker } from './protocol';
+import type { Engine, FrameMsg, FromWorker, ToWorker } from './protocol';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -48,7 +48,7 @@ const PARAMS: { key: string; label: string; unit: string; min: number; max: numb
   { key: 'hTerminalUm', label: 'Film breaks up below', unit: 'µm', min: 5, max: 200, step: 1 },
 ];
 /** Simulated seconds per wall second; Infinity runs as fast as the machine allows. */
-const SPEEDS = [300, 600, 1200, Infinity];
+const SPEEDS = [300, 1200, 6000, Infinity];
 
 /* ------------------------------------------------------------------ state */
 const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
@@ -74,13 +74,19 @@ let nextId = 100;
 let spillVolume = 300, leakRate = 40;
 let rate = 0, rateT = 0, rateSim = 0;
 let gen = 0;
+/** The newest fingerprint known: on the GPU a step's arrives two steps after it runs. */
+let latestHash: [number, string] = [-1, ''];
+/** The engine asked for (remembered per browser) and the one actually running (WebGPU can be missing). */
+let enginePref: Engine = (() => { try { return localStorage.getItem('engine') === 'cpu' ? 'cpu' : 'gpu'; } catch { return 'gpu'; } })();
+let engineNow: Engine = enginePref;
 
 /* ------------------------------------------------------------------ worker */
 worker.onmessage = (e: MessageEvent<FromWorker>) => {
   const m = e.data;
   if ('gen' in m && m.gen !== undefined && m.gen !== gen) return; // from a run since replaced
   if (m.type === 'frame') {
-    for (const [c, h] of m.hashes) hashes.set(c, h);
+    if (m.engine !== engineNow) { engineNow = m.engine; showEngine(); }
+    for (const [c, h] of m.hashes) { hashes.set(c, h); if (c >= latestHash[0]) latestHash = [c, h]; }
     if (m.marks) marks = m.marks;
     if (m.stats) showStats(m.stats, m.warnings ?? []);
     const now = performance.now();
@@ -103,14 +109,14 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
     buildParams(); buildSelected();
   } else if (m.type === 'progress') {
     if (busy) { busy.done = m.done; busy.of = m.of; }
-  } else if (m.type === 'log') verify(m.scenario, m.log, m.chunk);
+  } else if (m.type === 'log') verify(m.scenario, m.engine, m.log, m.chunk);
 };
 
 function load(next: Scenario) {
   sc = next;
-  snaps = []; snapEvery = 10; hashes = new Map(); marks = []; maxChunk = 0; history = null; live = null; selected = null; rate = 0;
+  snaps = []; snapEvery = 10; hashes = new Map(); latestHash = [-1, '']; marks = []; maxChunk = 0; history = null; live = null; selected = null; rate = 0;
   view.setLand(landMask(sc));
-  send({ type: 'load', scenario: sc.id, gen: ++gen });
+  send({ type: 'load', scenario: sc.id, gen: ++gen, engine: enginePref });
   $('verify-out').textContent = '';
   buildScenarios();
   setPlaying(true);
@@ -135,6 +141,7 @@ function resume() {
   history = null;
   snaps = snaps.filter((s) => s.chunk <= c);
   for (const k of [...hashes.keys()]) if (k > c) hashes.delete(k);
+  latestHash = [-1, ''];
   maxChunk = c;
   busy = { what: 'Replaying the log to this point', done: 0, of: c };
   send({ type: 'seek', chunk: c, gen: ++gen });
@@ -145,26 +152,42 @@ function resume() {
 let verifier: Worker | undefined;
 $('verify').onclick = () => { if (!busy && history === null) send({ type: 'export' }); };
 
-function verify(scenario: string, log: import('./runner').LogEntry[], upTo: number) {
+function verify(scenario: string, engine: Engine, log: import('./runner').LogEntry[], upTo: number) {
   verifier?.terminate();
   verifier = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
   const out = $('verify-out'), btn = $<HTMLButtonElement>('verify');
   const want = [...hashes].filter(([c]) => c <= upTo);
   btn.disabled = true;
-  out.innerHTML = `Replaying ${upTo} steps and ${log.length} edits from zero in a second worker… <div class="bar"><i style="width:0%"></i></div>`;
+  out.innerHTML = `Replaying ${upTo} steps and ${log.length} edits from zero in a second worker, on the ${engine === 'gpu' ? 'GPU' : 'CPU'}… <div class="bar"><i style="width:0%"></i></div>`;
   verifier.onmessage = (e: MessageEvent<FromWorker>) => {
     const m = e.data;
     if (m.type === 'progress') out.querySelector<HTMLElement>('.bar i')!.style.width = `${(100 * m.done) / Math.max(1, m.of)}%`;
     if (m.type === 'verified') {
       btn.disabled = false;
       out.innerHTML = m.first < 0
-        ? `<span class="ok">✓ Bit-identical</span><br>${m.checked} of ${m.checked} steps match: all 65,536 cells of thickness and momentum, as raw 64-bit floats, after replaying ${log.length} edit${log.length === 1 ? '' : 's'}.`
+        ? `<span class="ok">✓ Bit-identical</span><br>${m.checked} of ${m.checked} steps match: all 65,536 cells of thickness and momentum, as raw ${m.engine === 'gpu' ? '32-bit floats on this GPU' : '64-bit floats'}, after replaying ${log.length} edit${log.length === 1 ? '' : 's'}.`
         : `<span class="bad">✗ Diverged at step ${m.first}</span><br>${m.checked} steps checked.`;
       verifier?.terminate(); verifier = undefined;
     }
   };
-  verifier.postMessage({ type: 'verify', scenario, log, upTo, hashes: want } satisfies ToWorker);
+  verifier.postMessage({ type: 'verify', scenario, engine, log, upTo, hashes: want } satisfies ToWorker);
 }
+
+/* ------------------------------------------------------------------ engine */
+function showEngine() {
+  const b = $('engine');
+  b.innerHTML = engineNow === 'gpu' ? 'Engine <code>GPU</code>' : 'Engine <code>CPU</code>';
+  b.title = engineNow === 'gpu'
+    ? 'Running on WebGPU compute shaders (32-bit). Click to run on the CPU engine (64-bit) instead.'
+    : enginePref === 'gpu' ? 'This browser has no WebGPU, so the CPU engine runs.' : 'Running the CPU engine (64-bit). Click to run on the GPU instead.';
+}
+$('engine').onclick = () => {
+  enginePref = engineNow === 'gpu' ? 'cpu' : 'gpu';
+  try { localStorage.setItem('engine', enginePref); } catch { /* per-browser convenience only */ }
+  engineNow = enginePref;
+  showEngine();
+  load(sc);
+};
 
 /* ------------------------------------------------------------------ panels */
 function buildScenarios() {
@@ -286,14 +309,16 @@ function showTime() {
   $('clock').textContent = clock(c);
   $('rate').textContent = history !== null ? 'recording' : playing ? `${Math.round(rate)}× real time` : 'paused';
   $('step').textContent = String(c);
-  $('fp').textContent = hashes.get(c) ?? '--------';
+  const fp = hashes.get(c);
+  $('fp').textContent = fp ?? (history === null && latestHash[1] ? latestHash[1] : '········');
+  $('fp').parentElement!.title = fp || history !== null ? `Fingerprint of every cell of the oil field at step ${c}` : `Fingerprint at step ${latestHash[0]}; the newest steps' arrive a moment later`;
 }
 
 /* ------------------------------------------------------------------ timeline */
 function buildTimeline() {
   $('restart').innerHTML = ICON.restart;
   $('stepbtn').innerHTML = ICON.step;
-  $('play').innerHTML = ICON.play;
+  $('play').innerHTML = playing ? ICON.pause : ICON.play;
   $('play').onclick = () => setPlaying(!playing || history !== null);
   $('stepbtn').onclick = () => { if (history === null) { setPlaying(false); send({ type: 'step' }); } };
   $('restart').onclick = () => load(sc);
@@ -467,6 +492,7 @@ function frame(now: number) {
   requestAnimationFrame(frame);
 }
 
+showEngine();
 buildTools();
 buildTimeline();
 load(SCENARIOS[0]);

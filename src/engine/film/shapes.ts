@@ -106,7 +106,10 @@ export function strokeAt(r: ForcingRegion, px: number, py: number, out: { w: num
     const ax = P[i], ay = P[i + 1], bx = P[i + 2] - ax, by = P[i + 3] - ay, L2 = bx * bx + by * by;
     if (L2 <= 0) continue;
     const t = Math.max(0, Math.min(1, ((px - ax) * bx + (py - ay) * by) / L2));
-    const d = Math.hypot(px - ax - t * bx, py - ay - t * by);
+    const ex = px - ax - t * bx, ey = py - ay - t * by;
+    // clearly outside the width: skip before the (slow) hypot; the margin keeps the answer identical to d >= W
+    if (ex * ex + ey * ey > W * W * 1.0001) continue;
+    const d = Math.hypot(ex, ey);
     if (d >= W) continue;
     const k = (1 - d / W) ** 2, L = Math.sqrt(L2);
     tx += (k * bx) / L; ty += (k * by) / L;

@@ -1,0 +1,38 @@
+<!doctype html><meta charset="utf-8"><title>GPU vs CPU</title>
+<!-- Open at /tools/validate.html (?sc=<scenario>&steps=<n>) with npm run dev: the GPU port against the CPU engine. -->
+<pre id="out">running…</pre>
+<script type="module">
+import { Runner } from '/src/runner.ts';
+import { GpuSim, gpuDevice } from '/src/gpu/sim.ts';
+import { SCENARIOS, DX } from '/src/world.ts';
+
+// Compare the GPU port with the CPU engine: mass budget, sheen area and position, and footprint overlap.
+const SHEEN = 0.04e-6;
+function shape(h) {
+  let area = 0, sx = 0, sy = 0, m = 0;
+  for (let k = 0; k < h.length; k++) if (h[k] >= SHEEN) { area++; const i = k % 256, j = (k / 256) | 0; sx += i * h[k]; sy += j * h[k]; m += h[k]; }
+  return { area: area * DX * DX / 1e6, cx: (sx / m) * DX, cy: (sy / m) * DX };
+}
+function iou(a, b) { let i = 0, u = 0; for (let k = 0; k < a.length; k++) { const x = a[k] >= SHEEN, y = b[k] >= SHEEN; if (x && y) i++; if (x || y) u++; } return i / Math.max(u, 1); }
+const params = new URLSearchParams(location.search), steps = +(params.get('steps') ?? 120), only = params.get('sc');
+const device = await gpuDevice();
+const rows = [];
+for (const sc of SCENARIOS.filter((s) => !only || s.id === only)) {
+  const cpu = new Runner(sc), gpu = await GpuSim.create(device, sc);
+  // timed apart, so neither hides the other's cost
+  let t = performance.now();
+  for (let c = 0; c < steps; c++) cpu.step();
+  const tc = performance.now() - t;
+  t = performance.now();
+  for (let c = 0; c < steps; c++) await gpu.step();
+  await gpu.drain();
+  const tg = performance.now() - t;
+  const hc = Float32Array.from(cpu.model.core.oil.h), hg = await gpu.thickness();
+  const bc = cpu.budget(), bg = gpu.budget(), sc1 = shape(hc), sg = shape(hg);
+  const pct = (a, b) => ((100 * (b - a)) / Math.max(Math.abs(a), 1e-9)).toFixed(1) + '%';
+  rows.push({ sc: sc.id, steps, cpuMs: (tc / steps).toFixed(1), gpuMs: (tg / steps).toFixed(2), floating: pct(bc.floating, bg.floating), evap: pct(bc.evaporated, bg.evaporated), disp: pct(bc.dispersed, bg.dispersed), strand: `${bc.stranded.toFixed(1)}/${bg.stranded.toFixed(1)}`, left: `${bc.left.toFixed(2)}/${bg.left.toFixed(2)}`, area: pct(sc1.area, sg.area), centroidM: Math.hypot(sc1.cx - sg.cx, sc1.cy - sg.cy).toFixed(0), iou: iou(hc, hg).toFixed(3) });
+  gpu.destroy();
+  document.getElementById('out').textContent = JSON.stringify(rows, null, 1);
+}
+window.done = rows;
+</script>

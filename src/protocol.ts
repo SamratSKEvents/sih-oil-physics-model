@@ -2,20 +2,24 @@
 import type { LogEntry } from './runner';
 import type { Edit, Scene } from './world';
 
+/** Where the model runs: WebGPU compute, or the CPU engine as written. */
+export type Engine = 'gpu' | 'cpu';
+
 export type ToWorker =
-  | { type: 'load'; scenario: string; gen: number }
+  | { type: 'load'; scenario: string; gen: number; engine: Engine }
   | { type: 'edit'; edit: Edit }
   | { type: 'play'; playing: boolean; speed: number }
   | { type: 'step' }
   | { type: 'seek'; chunk: number; gen: number }
   | { type: 'export' }
-  | { type: 'verify'; scenario: string; log: LogEntry[]; upTo: number; hashes: [number, string][] };
+  | { type: 'verify'; scenario: string; engine: Engine; log: LogEntry[]; upTo: number; hashes: [number, string][] };
 
 export interface Budget { released: number; floating: number; evaporated: number; dispersed: number; stranded: number; left: number; held: number }
 
 export interface FrameMsg {
   type: 'frame';
   gen: number;
+  engine: Engine;
   chunk: number;
   t: number;
   playing: boolean;
@@ -33,7 +37,7 @@ export interface FrameMsg {
 
 export type FromWorker =
   | FrameMsg
-  | { type: 'scene'; scene: Scene; params: Record<string, number>; gen: number }
+  | { type: 'scene'; scene: Scene; params: Record<string, number>; gen: number; engine: Engine }
   | { type: 'progress'; done: number; of: number; gen?: number }
-  | { type: 'log'; scenario: string; log: LogEntry[]; chunk: number }
-  | { type: 'verified'; checked: number; first: number };
+  | { type: 'log'; scenario: string; engine: Engine; log: LogEntry[]; chunk: number }
+  | { type: 'verified'; checked: number; first: number; engine: Engine };

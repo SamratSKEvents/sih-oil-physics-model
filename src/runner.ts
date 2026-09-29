@@ -6,6 +6,7 @@ import { Budget, volume } from './engine/film/grid';
 import { SurfaceFlow } from './engine/film/flow';
 import { subSeed } from './engine/rng/prng';
 import { polygon, stroke } from './engine/film/shapes';
+import type { Budget as BudgetMsg } from './protocol';
 import { CHUNK, DX, HALF, N, landMask, type Edit, type Pt, type Scenario, type Scene, type Boom } from './world';
 
 /** Changing these rebuilds the eddy field, which is drawn from them once. */
@@ -14,7 +15,7 @@ const DEPTH = 12;
 /** Steps between refreshes of the drift the tracers follow: it is for show, and costs a full flow evaluation. */
 const DRIFT_EVERY = 10;
 
-const circle = ([cx, cy]: Pt, r: number) => {
+export const circle = ([cx, cy]: Pt, r: number) => {
   const flat: number[] = [];
   for (let s = 0; s < 24; s++) { const a = (s / 24) * 2 * Math.PI; flat.push(cx + r * Math.cos(a), cy + r * Math.sin(a)); }
   return polygon(flat);
@@ -118,9 +119,16 @@ export class Runner {
     if (this.chunk % DRIFT_EVERY === 0) this.drift = this.computeDrift();
   }
 
+  warnings() { return this.model.warnings(); }
+
   fingerprint() { return fingerprint(this.model.core.oil.h, this.model.core.oil.qx, this.model.core.oil.qy); }
 
   floating() { return volume(this.model.core.oil.h, DX); }
+
+  budget(): BudgetMsg {
+    const b = this.model.core.budget;
+    return { released: b.released, floating: this.floating(), evaporated: b.evaporated, dispersed: b.dispersed, stranded: b.stranded, left: b.left, held: this.heldByBooms };
+  }
 
   /**
    * Surface drift on a 16 × 16 grid (every 16th cell, from the cell-8 offset), zero over land: [u, v] per node.

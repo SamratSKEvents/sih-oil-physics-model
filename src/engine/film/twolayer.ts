@@ -361,6 +361,10 @@ export class CoastalCore {
   private curW = new Float64Array(256 * 256); // current-region weight and weighted vector per oil cell
   private curU = new Float64Array(256 * 256);
   private curV = new Float64Array(256 * 256);
+  private cellU = new Float64Array(128 * 128); // water cell-centre velocity, scratch for targets()
+  private cellV = new Float64Array(128 * 128);
+  private colI0 = new Int32Array(256);
+  private colFx = new Float64Array(256);
   regions: ForcingRegion[] = [];
   lastDt = 0; substeps = 0; waterSubsteps = 0;
 
@@ -407,22 +411,33 @@ export class CoastalCore {
     const [mu, mv] = this.flow.mean();
     const [lax, lay, lW] = this.flow.alongWind(), lag = this.flow.p.sheenLagFrac * lW, lagRef = this.flow.p.sheenLagRefUm * 1e-6;
     const r = w.dx / dx, wn = w.n, WU = w.u, WV = w.v;
-    // water cell-centre velocity, as cellVel(i, j) = [½(u[i] + u[i+1]), ½(v[j] + v[j+1])]
-    const cu = (i: number, j: number) => 0.5 * (WU[j * (wn + 1) + i] + WU[j * (wn + 1) + i + 1]);
-    const cv = (i: number, j: number) => 0.5 * (WV[j * wn + i] + WV[((j + 1) % wn) * wn + i]);
+    // water cell-centre velocity, as cellVel(i, j) = [½(u[i] + u[i+1]), ½(v[j] + v[j+1])], once per water cell
+    const CU = this.cellU, CV = this.cellV;
+    for (let j = 0; j < wn; j++)
+      for (let i = 0; i < wn; i++) {
+        CU[j * wn + i] = 0.5 * (WU[j * (wn + 1) + i] + WU[j * (wn + 1) + i + 1]);
+        CV[j * wn + i] = 0.5 * (WV[j * wn + i] + WV[((j + 1) % wn) * wn + i]);
+      }
+    // bilinear weights per oil column, the same for every row
+    const I0 = this.colI0, FX = this.colFx;
+    for (let i = 0; i < nx; i++) {
+      const gx = Math.min(wn - 1.001, Math.max(0, (i + 0.5) / r - 0.5));
+      I0[i] = Math.floor(gx); FX[i] = gx - I0[i];
+    }
+    const h = this.oil.h, tu = this.tu, tv = this.tv, curW = this.curW, curU = this.curU, curV = this.curV, anomU = this.anomU, anomV = this.anomV;
     for (let j = 0; j < ny; j++) {
       const gy = Math.min(wn - 1.001, Math.max(0, (j + 0.5) / r - 0.5)), j0 = Math.floor(gy), fy = gy - j0;
+      const r0 = j0 * wn, r1 = (j0 + 1) * wn;
       for (let i = 0; i < nx; i++) {
         const k = j * nx + i;
-        const gx = Math.min(wn - 1.001, Math.max(0, (i + 0.5) / r - 0.5));
-        const i0 = Math.floor(gx), fx = gx - i0;
+        const i0 = I0[i], fx = FX[i];
         // current regions replace the water velocity in the surface drift (the water layer itself is not forced by them)
-        const wu = (1 - fy) * ((1 - fx) * cu(i0, j0) + fx * cu(i0 + 1, j0)) + fy * ((1 - fx) * cu(i0, j0 + 1) + fx * cu(i0 + 1, j0 + 1));
-        const wv = (1 - fy) * ((1 - fx) * cv(i0, j0) + fx * cv(i0 + 1, j0)) + fy * ((1 - fx) * cv(i0, j0 + 1) + fx * cv(i0 + 1, j0 + 1));
+        const wu = (1 - fy) * ((1 - fx) * CU[r0 + i0] + fx * CU[r0 + i0 + 1]) + fy * ((1 - fx) * CU[r1 + i0] + fx * CU[r1 + i0 + 1]);
+        const wv = (1 - fy) * ((1 - fx) * CV[r0 + i0] + fx * CV[r0 + i0 + 1]) + fy * ((1 - fx) * CV[r1 + i0] + fx * CV[r1 + i0 + 1]);
         // sheen lag: thin oil is dragged towards a slower downwind drift than thick oil
-        const lagK = (lag * lagRef) / (this.oil.h[k] + lagRef);
-        this.tu[k] = (1 - this.curW[k]) * wu + this.curU[k] + mu + this.anomU[k] - lagK * lax;
-        this.tv[k] = (1 - this.curW[k]) * wv + this.curV[k] + mv + this.anomV[k] - lagK * lay;
+        const lagK = (lag * lagRef) / (h[k] + lagRef);
+        tu[k] = (1 - curW[k]) * wu + curU[k] + mu + anomU[k] - lagK * lax;
+        tv[k] = (1 - curW[k]) * wv + curV[k] + mv + anomV[k] - lagK * lay;
       }
     }
     void p;

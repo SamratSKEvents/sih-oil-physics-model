@@ -36,6 +36,8 @@ code, .num { font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; fo
 .top-right { display: flex; gap: 8px; }
 .chip { padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); background: var(--panel-2); }
 .chip code { color: var(--ink); }
+button.chip { cursor: pointer; font: inherit; }
+button.chip:hover { border-color: var(--accent); }
 
 .left, .right { overflow-y: auto; background: var(--panel); border-right: 1px solid var(--line); }
 .left { grid-area: left; }
