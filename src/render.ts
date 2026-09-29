@@ -1,10 +1,10 @@
 // Canvas drawing: sea and coast, oil by the Bonn Agreement appearance code, drift tracers, and the things a person
 // has placed (booms, wind and current paths, leaks). The grid is north-up; y grows upwards in metres.
-import { DX, HALF, N, type Pt, type Scene } from './world';
+import { DX, HALF, N, cellCentre, type Pt, type Scene } from './world';
 
 /** Bonn Agreement classes, lower bound in metres of thickness, with the colour drawn. */
 export const BONN: { name: string; min: number; css: string }[] = [
-  { name: 'Sheen', min: 0.04e-6, css: 'rgba(205,215,225,0.35)' },
+  { name: 'Sheen', min: 0.04e-6, css: '#c9d1d9' },
   { name: 'Rainbow', min: 0.3e-6, css: 'linear-gradient(90deg,#c084fc,#60a5fa,#4ade80,#facc15)' },
   { name: 'Metallic', min: 5e-6, css: 'rgb(130,134,140)' },
   { name: 'Broken true colour', min: 50e-6, css: 'rgb(110,66,32)' },
@@ -39,6 +39,8 @@ export interface Overlay {
   selected: { kind: 'boom' | 'stroke' | 'source'; id: number } | null;
   draft: { tool: string; path: Pt[]; radius?: number } | null;
   time: number;
+  /** Optional arrow fields on the 16 × 16 node grid, [u, v] m/s per node. */
+  arrows?: { wind: Float32Array | null; current: Float32Array | null };
 }
 
 export class View {
@@ -131,7 +133,7 @@ export class View {
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     ctx.save();
-    ctx.shadowColor = '#000a'; ctx.shadowBlur = 24;
+    ctx.shadowColor = 'rgba(16,24,32,0.22)'; ctx.shadowBlur = 18; ctx.shadowOffsetY = 4;
     ctx.drawImage(this.base, ox, oy, S, S);
     ctx.restore();
 
@@ -177,7 +179,28 @@ export class View {
     ctx.strokeStyle = '#ffffff14';
     ctx.lineWidth = 1;
     ctx.strokeRect(ox + 0.5, oy + 0.5, S - 1, S - 1);
+    if (o.arrows?.current) this.field(o.arrows.current, '#5ef0b0', 120, 0.01);
+    if (o.arrows?.wind) this.field(o.arrows.wind, '#e6f4ff', 1.6, 0.3);
     this.overlays(o);
+  }
+
+  /** Arrows on the 16 × 16 node grid: px per m/s, capped at 30 px; nodes on land or below `min` m/s are skipped. */
+  private field(f: Float32Array, color: string, pxPerMs: number, min: number) {
+    const c = this.ctx, k = this.S / 800;
+    c.strokeStyle = color; c.fillStyle = color; c.lineWidth = 1.6; c.lineCap = 'round';
+    for (let g = 0; g < 256; g++) {
+      const i = 8 + 16 * (g % 16), j = 8 + 16 * Math.floor(g / 16);
+      if (this.land[j * N + i]) continue;
+      const u = f[2 * g], v = f[2 * g + 1], sp = Math.hypot(u, v);
+      if (sp < min) continue;
+      const L = Math.min(30, sp * pxPerMs) * k, [x, y] = this.px([cellCentre(i), cellCentre(j)]);
+      const dx = (u / sp) * L, dy = -(v / sp) * L;
+      c.beginPath(); c.moveTo(x - dx / 2, y - dy / 2); c.lineTo(x + dx / 2, y + dy / 2); c.stroke();
+      const a = Math.atan2(dy, dx);
+      c.save(); c.translate(x + dx / 2, y + dy / 2); c.rotate(a);
+      c.beginPath(); c.moveTo(1, 0); c.lineTo(-5, -3.5); c.lineTo(-5, 3.5); c.closePath(); c.fill();
+      c.restore();
+    }
   }
 
   private path(pts: Pt[]) {

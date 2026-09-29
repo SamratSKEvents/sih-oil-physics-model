@@ -33,6 +33,14 @@
           <div id="selected"></div>
         </section>
         <section>
+          <h2>Display</h2>
+          <div class="checks">
+            <label><input type="checkbox" id="show-wind"> Wind arrows</label>
+            <label><input type="checkbox" id="show-current"> Current arrows</label>
+            <label><input type="checkbox" id="show-tracers" checked> Drift tracers</label>
+          </div>
+        </section>
+        <section>
           <h2>Conditions</h2>
           <div id="params"></div>
         </section>
@@ -51,9 +59,17 @@
           <div class="clock"><span id="clock">T+00:00</span><small id="rate"></small></div>
         </section>
         <section>
-          <h2>Oil budget</h2>
-          <div class="budget-bar" id="budget-bar"></div>
+          <h2>Oil budget <small>m³</small></h2>
+          <div id="chart-budget"></div>
           <dl class="rows" id="budget"></dl>
+        </section>
+        <section>
+          <h2>Slick area <small>km², thicker than sheen</small></h2>
+          <div id="chart-area"></div>
+        </section>
+        <section>
+          <h2>Thickest oil <small>µm</small></h2>
+          <div id="chart-thick"></div>
         </section>
         <section>
           <h2>Determinism</h2>

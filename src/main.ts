@@ -2,7 +2,9 @@
 // in a worker; this side keeps the scene a person is editing and sends every change to it as a logged edit.
 import './style.css';
 import { View, BONN, type Overlay } from './render';
-import { CHUNK, HALF, SCENARIOS, landMask, ring, spiral, type Pt, type Scenario, type Scene, type Stroke } from './world';
+import { TimeChart } from './charts';
+import { stroke, strokeAt } from './engine/film/shapes';
+import { CHUNK, DX, HALF, N, SCENARIOS, cellCentre, landMask, ring, spiral, type Pt, type Scenario, type Scene, type Stroke } from './world';
 import type { Engine, FrameMsg, FromWorker, ToWorker } from './protocol';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -97,6 +99,7 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
     // Long fast runs: keep the recording under ~100 MB by halving its density instead of growing without end.
     if (snaps.length > 400) { snaps = snaps.filter((_, i) => i % 2 === 0); snapEvery *= 2; }
     maxChunk = Math.max(maxChunk, m.chunk);
+    record(m);
     live = m;
     playing = m.playing;
     busy = null;
@@ -114,7 +117,7 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
 
 function load(next: Scenario) {
   sc = next;
-  snaps = []; snapEvery = 10; hashes = new Map(); latestHash = [-1, '']; marks = []; maxChunk = 0; history = null; live = null; selected = null; rate = 0;
+  snaps = []; snapEvery = 10; samples = []; sampleEvery = 1; hashes = new Map(); latestHash = [-1, '']; marks = []; maxChunk = 0; history = null; live = null; selected = null; rate = 0;
   view.setLand(landMask(sc));
   send({ type: 'load', scenario: sc.id, gen: ++gen, engine: enginePref });
   $('verify-out').textContent = '';
@@ -140,6 +143,7 @@ function resume() {
   const c = history;
   history = null;
   snaps = snaps.filter((s) => s.chunk <= c);
+  samples = samples.filter((s) => s.t <= c * CHUNK);
   for (const k of [...hashes.keys()]) if (k > c) hashes.delete(k);
   latestHash = [-1, ''];
   maxChunk = c;
@@ -282,18 +286,17 @@ function remove() {
 }
 
 const BUDGET_ROWS: [keyof FrameMsg['budget'], string, string][] = [
-  ['floating', 'Floating', '#f59e0b'],
-  ['evaporated', 'Evaporated', '#94a3b8'],
-  ['dispersed', 'Dispersed into water', '#38bdf8'],
-  ['stranded', 'Stranded / at booms', '#a3e635'],
-  ['left', 'Left the area', '#f472b6'],
+  ['floating', 'Floating', '#eb6834'],
+  ['evaporated', 'Evaporated', '#2a78d6'],
+  ['dispersed', 'Dispersed into water', '#1baf7a'],
+  ['stranded', 'Stranded / at booms', '#eda100'],
+  ['left', 'Left the area', '#e87ba4'],
 ];
 const m3 = (v: number) => (v >= 100 ? v.toFixed(0) : v.toFixed(1));
 
 function showBudget() {
   if (!live) return;
-  const b = live.budget, total = Math.max(b.released, 1e-9);
-  $('budget-bar').innerHTML = BUDGET_ROWS.map(([k, , c]) => `<i style="width:${(100 * Math.max(0, b[k])) / total}%;background:${c}"></i>`).join('');
+  const b = live.budget;
   $('budget').innerHTML = `<dt>Released</dt><dd>${m3(b.released)} m³</dd>` + BUDGET_ROWS.map(([k, name, c]) => `<dt><i style="background:${c}"></i>${name}</dt><dd>${m3(Math.max(0, b[k]))} m³</dd>`).join('');
 }
 
@@ -312,6 +315,69 @@ function showTime() {
   const fp = hashes.get(c);
   $('fp').textContent = fp ?? (history === null && latestHash[1] ? latestHash[1] : '········');
   $('fp').parentElement!.title = fp || history !== null ? `Fingerprint of every cell of the oil field at step ${c}` : `Fingerprint at step ${latestHash[0]}; the newest steps' arrive a moment later`;
+}
+
+
+/* ------------------------------------------------------------------ live charts */
+/** One row per recorded minute: budget terms, sheen area and thickest oil. Thinned like the recording on long runs. */
+interface Sample { t: number; b: FrameMsg['budget']; area: number; thick: number }
+let samples: Sample[] = [];
+let sampleEvery = 1;
+const hm = (t: number) => `${Math.floor(t / 3600)}:${String(Math.floor((t % 3600) / 60)).padStart(2, '0')}`;
+const num = (v: number) => (v === 0 ? '0' : v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2));
+const chartBudget = new TimeChart($('chart-budget'), { series: BUDGET_ROWS.map(([key, label, color]) => ({ key, label, color })), stacked: true, unit: 'm³', fmt: num, xfmt: hm });
+const chartArea = new TimeChart($('chart-area'), { series: [{ key: 'area', label: 'Slick area', color: '#2a78d6' }], unit: 'km²', fmt: num, xfmt: hm });
+const chartThick = new TimeChart($('chart-thick'), { series: [{ key: 'thick', label: 'Thickest oil', color: '#eb6834' }], unit: 'µm', fmt: num, xfmt: hm });
+let chartsAt = 0;
+
+function record(m: FrameMsg) {
+  const last = samples.at(-1);
+  if (last && m.t < last.t + sampleEvery * CHUNK) return;
+  let area = 0, thick = 0;
+  for (let k = 0; k < m.h.length; k++) { const v = m.h[k]; if (v >= 0.04e-6) area++; if (v > thick) thick = v; }
+  samples.push({ t: m.t, b: { ...m.budget }, area: (area * DX * DX) / 1e6, thick: thick * 1e6 });
+  if (samples.length > 600) { samples = samples.filter((_, i) => i % 2 === 0); sampleEvery *= 2; }
+}
+
+function showCharts(now: number) {
+  if (now - chartsAt < 250 || samples.length < 2) return;
+  chartsAt = now;
+  const xs = samples.map((s) => s.t);
+  chartBudget.set(xs, BUDGET_ROWS.map(([k]) => samples.map((s) => Math.max(0, s.b[k]))));
+  chartArea.set(xs, [samples.map((s) => s.area)]);
+  chartThick.set(xs, [samples.map((s) => s.thick)]);
+}
+
+/* ------------------------------------------------------------------ wind and current arrows */
+const show = { wind: false, current: false, tracers: true };
+for (const k of ['wind', 'current', 'tracers'] as const) {
+  const box = $<HTMLInputElement>(`show-${k}`);
+  box.checked = show[k];
+  box.onchange = () => { show[k] = box.checked; };
+}
+
+/** Wind at the 16 × 16 arrow nodes: the global wind, bent by drawn wind paths (the engine's localWind rule). */
+function windField(): Float32Array {
+  const out = new Float32Array(512), th = ((params.windDirDeg ?? 0) * Math.PI) / 180, W = params.windSpeed ?? 0;
+  const paths = scene.strokes.filter((s) => s.kind === 'wind').map((s) => ({ s, r: stroke(s.id, 'wind', s.path.flat(), s.width, s.speed) }));
+  const at = { w: 0, ux: 0, uy: 0 };
+  for (let g = 0; g < 256; g++) {
+    const x = cellCentre(8 + 16 * (g % 16)), y = cellCentre(8 + 16 * Math.floor(g / 16));
+    let wx = W * Math.sin(th), wy = W * Math.cos(th);
+    for (const { s, r } of paths) {
+      if (strokeAt(r, x, y, at).w <= 0) continue;
+      wx += at.w * (s.speed * at.ux - wx); wy += at.w * (s.speed * at.uy - wy);
+    }
+    out[2 * g] = wx; out[2 * g + 1] = wy;
+  }
+  return out;
+}
+
+/** Current: the surface drift the oil follows, less its windage share of the wind. Water, tide, eddies and drawn currents. */
+function currentField(drift: Float32Array, wind: Float32Array): Float32Array {
+  const out = new Float32Array(512), a = params.windage ?? 0;
+  for (let i = 0; i < 512; i++) out[i] = drift[i] === 0 && drift[i ^ 1] === 0 ? 0 : drift[i] - a * wind[i];
+  return out;
 }
 
 /* ------------------------------------------------------------------ timeline */
@@ -475,7 +541,8 @@ addEventListener('keydown', (e) => {
 
 /* ------------------------------------------------------------------ frame loop */
 $('legend').innerHTML = BONN.map((b) => `<div><i style="background:${b.css}"></i>${b.name} ≥ ${b.min * 1e6 >= 1 ? b.min * 1e6 : (b.min * 1e6).toFixed(2)} µm</div>`).join('')
-  + `<div><i style="background:#fbbf24"></i>Boom</div><div><i style="background:#7dd3fc"></i>Wind path</div><div><i style="background:#6ee7b7"></i>Current path</div>`;
+  + `<div><i style="background:#fbbf24"></i>Boom</div><div><i style="background:#7dd3fc"></i>Wind path</div><div><i style="background:#6ee7b7"></i>Current path</div>`
+  + `<div><i style="background:#9fb3c8"></i>Wind arrow</div><div><i style="background:#5ef0b0"></i>Current arrow</div>`;
 
 let lastT = performance.now();
 function frame(now: number) {
@@ -485,7 +552,13 @@ function frame(now: number) {
   const kmPx = view.len(1000);
   $('scale').querySelector('i')!.style.width = `${kmPx}px`;
   const shown = history !== null ? snaps.find((s) => s.chunk === history)?.h ?? null : live?.h ?? null;
-  view.draw(shown, live?.drift ?? null, history === null && playing ? (speed === Infinity ? rate : speed) : 0, dt, { scene, selected, draft, time: now / 1000 });
+  const wind = show.wind || show.current ? windField() : null;
+  const arrows = {
+    wind: show.wind ? wind : null,
+    current: show.current && live ? currentField(live.drift, wind!) : null,
+  };
+  view.draw(shown, show.tracers ? live?.drift ?? null : null, history === null && playing ? (speed === Infinity ? rate : speed) : 0, dt, { scene, selected, draft, time: now / 1000, arrows });
+  showCharts(now);
   drawTimeline();
   drawBanner();
   showTime();
