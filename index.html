@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Slick Lab</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><ellipse cx=%228%22 cy=%228.5%22 rx=%226.5%22 ry=%224.5%22 fill=%22%23f59e0b%22/></svg>" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="top">
+        <div class="brand"><span class="mark"></span><b>Slick Lab</b><span class="sub">Live oil-film simulation on a synthetic sea</span></div>
+        <div class="top-right">
+          <span class="chip" title="Fingerprint of every cell of the oil field at this step">State <code id="fp">--------</code></span>
+          <span class="chip">Step <code id="step">0</code></span>
+        </div>
+      </header>
+
+      <aside class="left">
+        <section>
+          <h2>Scenarios</h2>
+          <div id="scenarios" class="scenarios"></div>
+        </section>
+        <section>
+          <h2>Tools</h2>
+          <div id="tools" class="tools"></div>
+          <p id="tool-hint" class="hint"></p>
+          <div id="tool-options"></div>
+        </section>
+        <section id="selected-sec" hidden>
+          <h2>Selected</h2>
+          <div id="selected"></div>
+        </section>
+        <section>
+          <h2>Conditions</h2>
+          <div id="params"></div>
+        </section>
+      </aside>
+
+      <main class="stage" id="stage">
+        <canvas id="view"></canvas>
+        <div class="legend" id="legend"></div>
+        <div class="scale" id="scale"><i></i><span>1 km</span></div>
+        <div class="banner" id="banner" hidden></div>
+      </main>
+
+      <aside class="right">
+        <section>
+          <h2>Clock</h2>
+          <div class="clock"><span id="clock">T+00:00</span><small id="rate"></small></div>
+        </section>
+        <section>
+          <h2>Oil budget</h2>
+          <div class="budget-bar" id="budget-bar"></div>
+          <dl class="rows" id="budget"></dl>
+        </section>
+        <section>
+          <h2>Determinism</h2>
+          <p class="hint">Every change you make is logged with the simulated minute it took effect. Replaying that log from zero rebuilds every cell bit for bit. Rewinding on the timeline uses the same replay.</p>
+          <button id="verify" class="wide">Verify this run</button>
+          <div id="verify-out" class="verify"></div>
+        </section>
+        <section>
+          <details>
+            <summary>Engine readout</summary>
+            <dl class="rows small" id="stats"></dl>
+            <div id="warnings"></div>
+          </details>
+        </section>
+      </aside>
+
+      <footer class="timeline">
+        <div class="transport">
+          <button id="restart" class="icon" title="Restart scenario"></button>
+          <button id="play" class="icon primary" title="Play / pause (Space)"></button>
+          <button id="stepbtn" class="icon" title="Advance one minute"></button>
+        </div>
+        <div class="speeds" id="speeds"></div>
+        <div class="track" id="track"><div class="fill" id="fill"></div><div class="marks" id="marks"></div><div class="head" id="head"></div></div>
+        <span class="tl-time" id="tl-time">0 min</span>
+      </footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
