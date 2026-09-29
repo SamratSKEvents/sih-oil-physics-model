@@ -4,7 +4,7 @@ import './style.css';
 import { View, BONN, type Overlay } from './render';
 import { TimeChart } from './charts';
 import { stroke, strokeAt } from './engine/film/shapes';
-import { CHUNK, DX, HALF, N, SCENARIOS, cellCentre, landMask, ring, spiral, type Pt, type Scenario, type Scene, type Stroke } from './world';
+import { CHUNK, DX, HALF, SCENARIOS, cellCentre, landMask, ring, spiral, type Pt, type Scenario, type Scene, type Stroke } from './world';
 import type { Engine, FrameMsg, FromWorker, ToWorker } from './protocol';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
