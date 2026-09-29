@@ -1,7 +1,7 @@
 // Hosts the slick model on a scenario's coast and applies edits. Pure: no DOM, no timers, so the worker, the
 // determinism check and the test all run the same code.
 import { MasterModel } from './engine/film/master';
-import { OilLayer } from './engine/film/twolayer';
+import { DEFAULT_COAST, OilLayer, ShelfWater } from './engine/film/twolayer';
 import { Budget, volume } from './engine/film/grid';
 import { SurfaceFlow } from './engine/film/flow';
 import { subSeed } from './engine/rng/prng';
@@ -10,6 +10,9 @@ import { CHUNK, DX, HALF, N, landMask, type Edit, type Pt, type Scenario, type S
 
 /** Changing these rebuilds the eddy field, which is drawn from them once. */
 const FLOW_SHAPE = new Set(['eddySpeed', 'eddyScaleM']);
+const DEPTH = 12;
+/** Steps between refreshes of the drift the tracers follow: it is for show, and costs a full flow evaluation. */
+const DRIFT_EVERY = 10;
 
 const circle = ([cx, cy]: Pt, r: number) => {
   const flat: number[] = [];
@@ -61,13 +64,15 @@ export class Runner {
     this.base = landMask(sc);
     core.oil = new OilLayer(N, N, DX, this.base.slice());
     core.budget = new Budget(0);
-    // The water layer is 128² at 100 m: a water cell is land when most of its four oil cells are.
-    const w = core.water;
+    // The water layer is 128² at 100 m: a water cell is land when most of its four oil cells are. A 12 m shelf
+    // everywhere: its stable step is set by the deepest water, so the engine's 30 m default coast would cost
+    // half again as many water steps for the same flow.
+    const w = (core.water = new ShelfWater(128, 100, { ...DEFAULT_COAST, hMax: DEPTH }));
     for (let j = 0; j < w.n; j++)
       for (let i = 0; i < w.n; i++) {
         const b = this.base, k = 2 * j * N + 2 * i;
         w.land[j * w.n + i] = b[k] + b[k + 1] + b[k + N] + b[k + N + 1] >= 2 ? 1 : 0;
-        w.H[j * w.n + i] = 20;
+        w.H[j * w.n + i] = DEPTH;
       }
     this.apply({ k: 'scene', scene: sc.scene });
     for (const spill of sc.spills) this.apply({ k: 'spill', spill });
@@ -110,7 +115,7 @@ export class Runner {
     for (const s of this.scene.sources) this.model.addOil(circle(s.at, 90), (s.rate * CHUNK) / 3600, 'uniform', false);
     this.model.step(CHUNK);
     this.chunk++;
-    this.drift = this.computeDrift();
+    if (this.chunk % DRIFT_EVERY === 0) this.drift = this.computeDrift();
   }
 
   fingerprint() { return fingerprint(this.model.core.oil.h, this.model.core.oil.qx, this.model.core.oil.qy); }

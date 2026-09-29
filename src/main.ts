@@ -47,7 +47,8 @@ const PARAMS: { key: string; label: string; unit: string; min: number; max: numb
   { key: 'Kh', label: 'Turbulent diffusion', unit: 'm²/s', min: 0, max: 10, step: 0.1 },
   { key: 'hTerminalUm', label: 'Film breaks up below', unit: 'µm', min: 5, max: 200, step: 1 },
 ];
-const SPEEDS = [60, 300, 600, 1200];
+/** Simulated seconds per wall second; Infinity runs as fast as the machine allows. */
+const SPEEDS = [300, 600, 1200, Infinity];
 
 /* ------------------------------------------------------------------ state */
 const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
@@ -63,6 +64,7 @@ let draft: Overlay['draft'] = null;
 let playing = false, speed = 600;
 let live: FrameMsg | null = null;
 let snaps: { chunk: number; h: Float32Array }[] = [];
+let snapEvery = 10;
 let hashes = new Map<number, string>();
 let marks: NonNullable<FrameMsg['marks']> = [];
 let maxChunk = 0;
@@ -85,7 +87,9 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
     if (live && m.t > rateSim && now > rateT) rate += 0.3 * ((m.t - rateSim) / ((now - rateT) / 1000) - rate);
     rateT = now; rateSim = m.t;
     const lastSnap = snaps.at(-1);
-    if (!lastSnap || m.chunk >= lastSnap.chunk + 10) snaps.push({ chunk: m.chunk, h: m.h });
+    if (!lastSnap || m.chunk >= lastSnap.chunk + snapEvery) snaps.push({ chunk: m.chunk, h: m.h });
+    // Long fast runs: keep the recording under ~100 MB by halving its density instead of growing without end.
+    if (snaps.length > 400) { snaps = snaps.filter((_, i) => i % 2 === 0); snapEvery *= 2; }
     maxChunk = Math.max(maxChunk, m.chunk);
     live = m;
     playing = m.playing;
@@ -104,7 +108,7 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
 
 function load(next: Scenario) {
   sc = next;
-  snaps = []; hashes = new Map(); marks = []; maxChunk = 0; history = null; live = null; selected = null; rate = 0;
+  snaps = []; snapEvery = 10; hashes = new Map(); marks = []; maxChunk = 0; history = null; live = null; selected = null; rate = 0;
   view.setLand(landMask(sc));
   send({ type: 'load', scenario: sc.id, gen: ++gen });
   $('verify-out').textContent = '';
@@ -295,8 +299,8 @@ function buildTimeline() {
   $('restart').onclick = () => load(sc);
   $('speeds').replaceChildren(...SPEEDS.map((s) => {
     const b = document.createElement('button');
-    b.textContent = `${s}×`;
-    b.title = `${s / 60} simulated minutes per second`;
+    b.textContent = s === Infinity ? 'Max' : `${s}×`;
+    b.title = s === Infinity ? 'As fast as this machine can run it' : `${s / 60} simulated minutes per second`;
     b.className = s === speed ? 'on' : '';
     b.onclick = () => { speed = s; if (playing) send({ type: 'play', playing, speed }); buildTimeline(); };
     return b;
@@ -456,7 +460,7 @@ function frame(now: number) {
   const kmPx = view.len(1000);
   $('scale').querySelector('i')!.style.width = `${kmPx}px`;
   const shown = history !== null ? snaps.find((s) => s.chunk === history)?.h ?? null : live?.h ?? null;
-  view.draw(shown, live?.drift ?? null, history === null && playing ? speed : 0, dt, { scene, selected, draft, time: now / 1000 });
+  view.draw(shown, live?.drift ?? null, history === null && playing ? (speed === Infinity ? rate : speed) : 0, dt, { scene, selected, draft, time: now / 1000 });
   drawTimeline();
   drawBanner();
   showTime();
