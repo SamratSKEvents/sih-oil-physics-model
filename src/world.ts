@@ -56,9 +56,46 @@ export function ring([cx, cy]: Pt, R: number): Pt[] {
   return pts;
 }
 
+/** Dashes of boom along an ellipse: n pieces, each `arc` degrees long, the first starting at `from` degrees. */
+function dashedRing(firstId: number, rx: number, ry: number, n: number, arc: number, from: number): Scene['booms'] {
+  return Array.from({ length: n }, (_, d) => {
+    const a0 = ((from + (d * 360) / n) * Math.PI) / 180, path: Pt[] = [];
+    for (let s = 0; s <= 8; s++) { const a = a0 + ((arc * Math.PI) / 180) * (s / 8); path.push([rx * Math.cos(a), ry * Math.sin(a)]); }
+    return { id: firstId + d, path };
+  });
+}
+
 const empty = (): Scene => ({ booms: [], strokes: [], sources: [] });
 
 export const SCENARIOS: Scenario[] = [
+  {
+    id: 'boom-rings',
+    name: 'Boom rings',
+    blurb: 'A slick inside two broken rings of boom, gaps staggered. Wind and eddies push oil through the inner gaps; the outer ring catches most of it.',
+    params: { windSpeed: 7, windDirDeg: 60, eddySpeed: 0.05, uTide: 0.1 },
+    scene: {
+      booms: [...dashedRing(1, 2600, 1750, 6, 36, 15), ...dashedRing(20, 5000, 3300, 8, 26, 38)],
+      strokes: [],
+      sources: [],
+    },
+    spills: [{ at: [0, 0], radius: 750, volume: 400 }],
+  },
+  {
+    id: 'four-way',
+    name: 'Four-way split',
+    blurb: 'Four winds blow out from the middle, to each corner. The slick is pulled four ways at once and tears into four.',
+    params: { windSpeed: 0, windDirDeg: 0, eddySpeed: 0.02, uTide: 0 },
+    scene: {
+      booms: [], sources: [],
+      strokes: ([[-1, 1, 'north-west'], [1, 1, 'north-east'], [-1, -1, 'south-west'], [1, -1, 'south-east']] as const).map(([sx, sy, name], i) => ({
+        // each path starts ~850 m out and is narrow enough to leave the centre calm: where paths overlap the last
+        // drawn wins, so overlapping at the middle would hand the whole slick to one corner
+        id: 50 + i, kind: 'wind' as const, label: `Wind to the ${name}`, width: 900, speed: 20,
+        path: [[sx * 600, sy * 600], [sx * 5200, sy * 5200]] as Pt[],
+      })),
+    },
+    spills: [{ at: [0, 0], radius: 1100, volume: 450 }],
+  },
   {
     id: 'open-sea',
     name: 'Open sea',

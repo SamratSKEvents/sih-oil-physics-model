@@ -23,7 +23,12 @@ function run(id: string) {
 }
 
 test('CPU engine output is unchanged', () => {
-  const now = Object.fromEntries(SCENARIOS.map((s) => [s.id, run(s.id)]));
-  if (!existsSync(FILE)) { writeFileSync(FILE, JSON.stringify(now)); return; }
-  expect(now).toEqual(JSON.parse(readFileSync(FILE, 'utf8')));
+  // scenarios on record must match; a scenario added since is recorded (the engine is what is under test)
+  const saved: Record<string, string[]> = existsSync(FILE) ? JSON.parse(readFileSync(FILE, 'utf8')) : {};
+  for (const s of SCENARIOS) {
+    const now = run(s.id);
+    if (saved[s.id]) expect(now, s.id).toEqual(saved[s.id]);
+    else saved[s.id] = now;
+  }
+  writeFileSync(FILE, JSON.stringify(saved));
 }, 120000);
